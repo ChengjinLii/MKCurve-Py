@@ -13,22 +13,19 @@
 
 </div>
 
-An **unofficial, modified Python port** of MK-Curve by Fan Zhang and
-collaborators, extracted from SlicerDSpace. This is not an original-author
-Python release or an author/institution endorsement.
-It runs without 3D Slicer, SlicerDSpace, MATLAB or DIPY.
+MKCurve-Py is a standalone Python implementation of MK-Curve based on the
+MATLAB code by Fan Zhang and collaborators and the Python translation
+developed in SlicerDSpace. It provides a Python API and command-line interface
+built on NumPy, SciPy and NiBabel.
 
 **Preprocessed multi-shell diffusion MRI in. Original and b0-corrected
 tensor/kurtosis maps, full MK curves, validity masks and provenance out.**
-
-Research use only. Synthetic tests do not establish clinical accuracy,
-anatomical validity or whole-brain performance.
 
 ---
 
 ## Publication
 
-Please cite the **original method**, not this packaging work as a new algorithm:
+If you use MKCurve-Py in research, please cite the original MK-Curve paper:
 
 > Fan Zhang, Lipeng Ning, Lauren J. O'Donnell and Ofer Pasternak.
 > [MK-curve - Characterizing the relation between mean kurtosis and alterations
@@ -70,30 +67,30 @@ DWI + bval + bvec + binary mask
  -> raw maps + validity masks + full curves + run record
 ```
 
-OLS initialization, **predicted-signal weights**, and one weighted solve are
-retained. This is not ordinary DIPY DKI or a clipped kurtosis map. Diffusion
-eigenvalues and kurtosis are not clipped; parameter maps are not smoothed.
-Bad input signals are repaired sequentially from positive local neighbors in
-the working copy following the author policy. Repair counts are recorded.
+The fit uses OLS initialization, **predicted-signal weights** and one weighted
+solve. It retains raw diffusion eigenvalues and kurtosis values, with separate
+validity masks and unsmoothed parameter maps. Bad input signals are repaired
+sequentially from positive local neighbors in a working copy, following the
+author policy. Repair counts are recorded.
 
-### Port Boundaries
+### Implementation Notes
 
 The Python translation originated in
 [SlicerDSpace](https://github.com/ChengjinLii/SlicerDSpace), snapshot
 `57b044f54411b84230564fdcef18c469742569c7`.
 [provenance.json](provenance.json) records source paths and SHA-256 hashes.
-The tensor core and 256-direction table are copied without numerical edits.
+The tensor core and 256-direction table match that snapshot.
 
-Explicit differences from the original MATLAB workflow:
+This modified implementation adapts the original MATLAB workflow as follows:
 - Baselines use caller-defined `b <= 50 s/mm^2` by default and are averaged.
 - Complete shells (100 s/mm^2 tolerance anchored at the smallest b-value)
   are selected by their median, at most 3000 s/mm^2 by default.
-  This is not an individual-volume upper cutoff.
-- The adaptive integer grid does not branch on HCP/Ndyx directory names.
+  The upper b-value limit applies to shell medians.
+- The adaptive integer grid is determined by baseline signal values.
 - Radial integration is defined at principal-axis poles.
-- Nonfinite curves are invalid, not silently corrected.
-- Input preparation, chunk scheduling, validity masks and provenance are
-  infrastructure, not new method-validation claims.
+- Nonfinite curves receive an invalid-curve mask.
+- The Python layer adds input preparation, bounded chunk scheduling,
+  per-metric validity masks and provenance records.
 
 ---
 
@@ -110,7 +107,6 @@ mkcurve doctor
 
 For development: `python -m pip install -e ".[test]"`.
 The console command and `python -m mkcurve` work outside the checkout.
-No weights or external source checkout are downloaded.
 
 ### Key Dependencies
 
@@ -123,15 +119,15 @@ No weights or external source checkout are downloaded.
 | threadpoolctl | >= 3.1 | BLAS thread limits |
 | pytest | >= 7, test extra only | Synthetic regressions |
 
-These are declared requirements, not a claim that every combination was
-tested. `mkcurve doctor` reports actual versions, resources and source hashes.
+`mkcurve doctor` reports installed versions, resources and source hashes.
 
 ---
 
 ## Inputs
 
 Provide motion/eddy/susceptibility-corrected DWI with correspondingly rotated
-gradients. This package does not preprocess, generate a mask or resample.
+gradients and an aligned binary mask. Preprocessing, mask generation and
+resampling are separate steps.
 
 ```text
 inputs/
@@ -147,9 +143,9 @@ Weighted directions must be meaningful; nonzero vectors are normalized
 during design construction. Diffusivities are mm^2/s; kurtosis and FA
 are dimensionless.
 
-**Signal scale matters.** The original adaptive integer b0 grid cannot support
-normalized signals near 1. Use explicitly justified rescaling or provide a
-custom grid in the same signal units. There is no hidden rescaling.
+**Signal scale matters.** The adaptive b0 grid uses integer signal values.
+For normalized signals near 1, rescale the acquisition explicitly or provide a
+custom grid in the same signal units. Signal intensities are used as supplied.
 
 ---
 
@@ -167,9 +163,9 @@ mkcurve run \
 ```
 
 Use a **new or empty output directory**, separate from all inputs. Nonempty
-outputs, including failed runs, are refused. Inputs are hashed before/after
-fitting and never intentionally overwritten. Do not run concurrent jobs
-against the same output directory.
+outputs, including failed runs, are refused. Source inputs remain unchanged,
+with hashes recorded before and after fitting. Use separate output directories
+for concurrent jobs.
 
 ### Common Options
 
@@ -225,7 +221,6 @@ python examples/synthetic_demo.py --output-root outputs/synthetic-demo
 
 This generates a tiny artificial acquisition with a perturbed baseline and
 runs the actual algorithm. Use a fresh directory on reruns.
-It is a functionality check, not a biological or clinical benchmark.
 
 ---
 
@@ -246,31 +241,31 @@ It is a functionality check, not a biological or clinical benchmark.
 | `mkcurve_record.json` | Status, settings, hashes, repair counts, outputs, QC. |
 | `mkcurve_progress.json` | Running/completed/failed progress. |
 
-Voxel order is **MATLAB/Fortran**, not C-order. Reconstruct indices with
+Voxel order is **MATLAB/Fortran**. Reconstruct indices with
 `np.unravel_index(np.flatnonzero(mask.ravel(order="F")), mask.shape, order="F")`.
 Coefficients are log(S0), six diffusion entries (xx,xy,xz,yy,yz,zz), and
 fifteen **unnormalized** symmetric fourth-order entries in lexicographic
 `combinations_with_replacement(range(3), 4)` order.
 
 Maps are float32, masks uint8, with the input affine; outside-mask values are
-zero. Invalid in-mask values remain raw and may be nonfinite. Use masks, not
-zero-filled background, to select fitted tissue.
+zero. Invalid in-mask values remain raw and may be nonfinite. Select fitted
+voxels using validity masks.
 
 Per-metric bounds: FA [0,1], kurtosis [0,3], diffusion [0,0.005], with finite
 fit/curve/residual and positive diffusion eigenvalues. The retained legacy
 joint gate checks all maps together and is distinct from per-metric checks.
-A failed RK does not erase independently valid MK.
-These are review gates, not fitted-value constraints.
+Metric-specific masks let MK remain eligible when RK fails.
+These ranges govern validity masks; fitted values remain unchanged.
 
 The CLI exits nonzero on failure, including zero jointly valid corrected
 voxels. Partial invalidity can exit zero: **inspect masks,
 `automatic_qc_passed` and `human_review`**. Human review stays `pending`;
-automatic QC is not clinical approval. Failure records may be minimal;
-partial arrays are not completed results.
+review the results before analysis. After a failure, use the run record to
+distinguish partial artifacts from completed outputs.
 
 Curve storage alone requires roughly `8 * grid_samples * mask_voxels` bytes,
 in addition to temporary float64 signal volumes and map buffers.
-Whole-brain runtime/performance is not guaranteed.
+Plan disk space and runtime for the grid size and number of masked voxels.
 
 ---
 
@@ -286,25 +281,20 @@ Tests cover analytic synthetic map recovery, predicted weights, detection
 indexing, invalid input, repair, chunk/parallel equivalence, QR fallback,
 log reuse, geometry, input immutability and CLI behavior.
 Executed local environments and results are recorded in
-[VALIDATION.md](VALIDATION.md); these are not clinical-validation claims.
-Testing is local only; this repository does not ship GitHub Actions workflows.
+[VALIDATION.md](VALIDATION.md). Run the tests locally with the commands above.
 
 The inherited [synthetic fixture](tests/fixtures/mkcurve_author_octave.json)
 records previous outputs of unmodified author routines in GNU Octave 7.3.0.
 Its upstream commit and reference-output SHA-256 are preserved. Current tests
-compare to that stored artifact, **not a fresh MATLAB/Octave execution**.
+compare results against that stored artifact.
 [The harness](tests/mkcurve_author_reference.m) needs a separately obtained
-author checkout and prepared MAT input; no reference engine is bundled.
-
-No real-subject data, private datasets, paper source/PDFs or large weights
-are included. Historical parent-project full-brain results are not
-validation evidence for this standalone release.
+author checkout and prepared MAT input.
 
 ---
 
 ## License
 
-This is a mixed-license modified distribution, **not blanket MIT/BSD**:
+Licenses apply by component:
 - Workflow translation: original BWH MK-Curve terms in [LICENSE](LICENSE)
   and [licenses/MK-Curve-LICENSE.txt](licenses/MK-Curve-LICENSE.txt).
 - DKI tensor translation and direction table: MPL-2.0, Copyright (c) 2017

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mkcurve-py"
 version = "0.1.0"
-description = "Standalone, unofficial Python port of the MK-Curve diffusion kurtosis correction"
+description = "Standalone Python implementation of MK-Curve for diffusion kurtosis imaging"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "LicenseRef-MK-Curve AND MPL-2.0 AND BSD-3-Clause"
