@@ -287,6 +287,7 @@ indexing, invalid input, repair, chunk/parallel equivalence, QR fallback,
 log reuse, geometry, input immutability and CLI behavior.
 Executed local environments and results are recorded in
 [VALIDATION.md](VALIDATION.md); these are not clinical-validation claims.
+Testing is local only; this repository does not ship GitHub Actions workflows.
 
 The inherited [synthetic fixture](tests/fixtures/mkcurve_author_octave.json)
 records previous outputs of unmodified author routines in GNU Octave 7.3.0.

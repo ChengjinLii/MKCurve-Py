@@ -46,5 +46,5 @@ Only synthetic data were executed. The inherited fixture records a previous
 GNU Octave 7.3.0 run; it was not regenerated in this release task.
 No real-subject, whole-brain, biological, clinical or performance-validation
 claim follows from these checks. Other platforms and dependency combinations
-require separate verification. GitHub Actions status must be checked on the
-published commit rather than inferred from the local results above.
+require separate verification. No GitHub Actions workflow is shipped;
+the results above are local checks only.
