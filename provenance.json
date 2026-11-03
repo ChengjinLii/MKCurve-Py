@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "package": "mkcurve-py",
+  "version": "0.1.0",
+  "original_method": {
+    "repository": "https://github.com/zhangfanmark/MK-Curve",
+    "commit": "9a213e1a5850fe50c998793f31ed852df00242f8",
+    "doi": "10.1016/j.neuroimage.2019.04.015"
+  },
+  "python_port_source": {
+    "repository": "https://github.com/ChengjinLii/SlicerDSpace",
+    "commit": "57b044f54411b84230564fdcef18c469742569c7",
+    "dirty_source_files": false
+  },
+  "source_files": [
+    {
+      "path": "microstructure/mkcurve.py",
+      "sha256": "cbc6c255fb15a6683311339d6ef1f8971961f6279f2c824ae9c63e772b2894e2",
+      "standalone_paths": [
+        "src/mkcurve/core.py"
+      ]
+    },
+    {
+      "path": "microstructure/mkcurve_tensor.py",
+      "sha256": "15295097531da913c8f65f958d922692a0fb04d585a311d498b2caf2447a1086",
+      "standalone_paths": [
+        "src/mkcurve/mkcurve_tensor.py"
+      ]
+    },
+    {
+      "path": "microstructure/mkcurve_inputs.py",
+      "sha256": "b8ae8c19d3c3bcda0507829d981ce1e193bf642647a6a9781ae9c43f4b020df4",
+      "standalone_paths": [
+        "src/mkcurve/mkcurve_inputs.py"
+      ]
+    },
+    {
+      "path": "microstructure/mkcurve_directions.json",
+      "sha256": "988206b31a60e41587116e399bf5d24c2c96f8a6d3424221102462907a974d38",
+      "standalone_paths": [
+        "src/mkcurve/mkcurve_directions.json"
+      ]
+    },
+    {
+      "path": "microstructure/chunk_dispatch.py",
+      "sha256": "25ee81fb730063176ba98dfd44e7fad1b1d7151a5fee2e7120b4ba9bc28215bd",
+      "standalone_paths": [
+        "src/mkcurve/chunk_dispatch.py"
+      ]
+    },
+    {
+      "path": "microstructure/dki.py",
+      "sha256": "6c7a07a5323cc8d6bd287522b437d82fe1028693a65f037608237e0c27725ff4",
+      "standalone_paths": [
+        "src/mkcurve/_io.py"
+      ]
+    },
+    {
+      "path": "Testing/Python/test_mkcurve_python.py",
+      "sha256": "2d16f257540f977ca9611ae30c6a308b66732b75272e5806de63aca1cf4ef5d7",
+      "standalone_paths": [
+        "tests/test_core.py"
+      ]
+    },
+    {
+      "path": "Testing/Python/test_mkcurve_qr_optimization.py",
+      "sha256": "6e73f4d67f17faf73d205076a5789fcfaebe52e351db43deb20e2b7121828f43",
+      "standalone_paths": [
+        "tests/test_qr.py"
+      ]
+    },
+    {
+      "path": "Testing/Python/test_mkcurve_signal_reuse.py",
+      "sha256": "d40e49454dac57175de95c467dc50d1f057bc4d5ea95e4e7bae1345c17035de1",
+      "standalone_paths": [
+        "tests/test_signal_reuse.py"
+      ]
+    },
+    {
+      "path": "Testing/Python/fixtures/mkcurve_author_octave.json",
+      "sha256": "ea6dffdafa016b3c9b7101c9c834f764414f6dec12882a8ec6d75355d4e681b1",
+      "standalone_paths": [
+        "tests/fixtures/mkcurve_author_octave.json"
+      ]
+    },
+    {
+      "path": "Testing/Python/mkcurve_author_reference.m",
+      "sha256": "ad0928be3adfe2e8cc9be6cbd2e3da1e5776b7f16ecabfd470feccb658e4fab3",
+      "standalone_paths": [
+        "tests/mkcurve_author_reference.m"
+      ]
+    },
+    {
+      "path": "licenses/MK-Curve-LICENSE.txt",
+      "sha256": "1d7e4a343454fd43def6a0f78e9d5fb074e4a1a06ae525f1ac7046e16721a548",
+      "standalone_paths": [
+        "licenses/MK-Curve-LICENSE.txt",
+        "LICENSE",
+        "README.md"
+      ]
+    },
+    {
+      "path": "licenses/MK-Curve-DKI-MPL-2.0.txt",
+      "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+      "standalone_paths": [
+        "licenses/MK-Curve-DKI-MPL-2.0.txt"
+      ]
+    },
+    {
+      "path": "LICENSE.txt",
+      "sha256": "24b181f99b1d590d54b51c07b5f58959d87ed37526096a07c2ce983558ffc792",
+      "standalone_paths": [
+        "licenses/BSD-3-Clause.txt"
+      ]
+    }
+  ],
+  "modifications": [
+    "Standalone src-layout package, CLI/API and bundled resource discovery; no SlicerDSpace runtime import.",
+    "Tensor core, integration directions and synthetic Octave fixture preserved unchanged.",
+    "Extracted shell grouping and atomic JSON/hash helpers instead of depending on parent DKI module.",
+    "Removed parent SLICERDSPACE_STAGE_CPUS environment coupling and MATLAB-only path guidance.",
+    "Reject output paths containing inputs and nonempty output directories; validate b-value limits and grid dimensionality.",
+    "Re-encode staged mask as compressed NIfTI, allowing either .nii or .nii.gz source masks.",
+    "Record whether grid is adaptive or explicitly supplied.",
+    "Reuse public synthetic tests only; replace DIPY-based synthetic generator with analytic constant-directional-kurtosis signals; omit parent integration/private-data tests."
+  ],
+  "validation_scope": "Synthetic functional/regression tests and comparison to an inherited stored Octave fixture only; no fresh MATLAB/Octave run, real-subject or clinical validation.",
+  "initial_repository_commit": "4e634b86a817901bb7f8e6a4021157b29ea9f63f",
+  "excluded_assets": [
+    "Patient and HCP sample data",
+    "paper source and PDFs",
+    "model weights",
+    "MATLAB backend and proprietary helper",
+    "historical full-brain benchmark artifacts"
+  ]
+}

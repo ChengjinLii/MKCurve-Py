@@ -1,0 +1,4 @@
+include LICENSE THIRD_PARTY_NOTICES.md CITATION.cff provenance.json VALIDATION.md
+recursive-include licenses *.txt
+recursive-include tests *.py *.json *.m
+recursive-include examples *.py

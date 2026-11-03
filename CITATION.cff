@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "Please cite the original MK-Curve method in preferred-citation; this is an unofficial Python port."
+title: "MKCurve-Py: Standalone Unofficial Python Port of MK-Curve"
+type: software
+version: 0.1.0
+authors:
+  - family-names: Li
+    given-names: Chengjin
+repository-code: "https://github.com/ChengjinLii/MKCurve-Py"
+url: "https://github.com/ChengjinLii/MKCurve-Py"
+preferred-citation:
+  type: article
+  title: "MK-curve - Characterizing the relation between mean kurtosis and alterations in the diffusion MRI signal"
+  authors:
+    - family-names: Zhang
+      given-names: Fan
+    - family-names: Ning
+      given-names: Lipeng
+    - family-names: O'Donnell
+      given-names: Lauren J.
+    - family-names: Pasternak
+      given-names: Ofer
+  journal: NeuroImage
+  year: 2019
+  volume: 196
+  start: 68
+  end: 80
+  doi: 10.1016/j.neuroimage.2019.04.015

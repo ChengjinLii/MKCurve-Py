@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mkcurve-py"
+version = "0.1.0"
+description = "Standalone, unofficial Python port of the MK-Curve diffusion kurtosis correction"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "LicenseRef-MK-Curve AND MPL-2.0 AND BSD-3-Clause"
+license-files = ["LICENSE", "licenses/*.txt"]
+authors = [{name = "Chengjin Li and the SlicerDSpace contributors"}]
+dependencies = ["numpy>=1.24", "scipy>=1.10", "nibabel>=5.1", "threadpoolctl>=3.1"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+mkcurve = "mkcurve.cli:main"
+
+[project.urls]
+Repository = "https://github.com/ChengjinLii/MKCurve-Py"
+Issues = "https://github.com/ChengjinLii/MKCurve-Py/issues"
+"Original MATLAB Code" = "https://github.com/zhangfanmark/MK-Curve"
+Publication = "https://doi.org/10.1016/j.neuroimage.2019.04.015"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mkcurve = ["mkcurve_directions.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
