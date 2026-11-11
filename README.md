@@ -90,7 +90,9 @@ This modified implementation adapts the original MATLAB workflow as follows:
 - Radial integration is defined at principal-axis poles.
 - Nonfinite curves receive an invalid-curve mask.
 - The Python layer adds input preparation, bounded chunk scheduling,
-  per-metric validity masks and provenance records.
+  per-metric validity masks, provenance records, cached LAPACK QR/Chebyshev
+  synthetic-b0 evaluation, batched 3x3 eigendecomposition and optional
+  VRAM-adaptive FP64 PyTorch/cuSOLVER CUDA acceleration (`--device cuda`).
 
 ---
 
@@ -178,6 +180,7 @@ for concurrent jobs.
 | `--solver reference` | Pivoted-QR weighted solves; default. |
 | `--solver batched` | Optional normal systems with QR fallback; numerical differences possible. |
 | `--num-workers 2` | Spawned CPU workers; default 1. |
+| `--device cpu` | Execution device (`cpu`, `cuda`, or `auto`); default `cpu`. |
 | `--worker-threads 1` | BLAS threads per worker; implicit 1 when workers > 1. |
 | `--voxels-per-chunk 64` | Chunk size. |
 | `--chunk-schedule dynamic` | Bounded completion-driven scheduling; `ordered` also available. |

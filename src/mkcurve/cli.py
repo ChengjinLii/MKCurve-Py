@@ -22,6 +22,7 @@ def main(argv=None):
     run.add_argument("--threshold", type=float, default=.5)
     run.add_argument("--grid", help="Optional text/CSV file with one increasing positive synthetic b0 per row")
     run.add_argument("--solver", choices=("reference", "batched"), default="reference")
+    run.add_argument("--device", choices=("cpu", "cuda", "auto"), default="cpu")
     run.add_argument("--num-workers", type=int, default=1)
     run.add_argument("--worker-threads", type=int)
     run.add_argument("--voxels-per-chunk", type=int, default=64)

@@ -43,7 +43,8 @@ def inspect_mkcurve_backend(*_legacy_paths):
 
     files = [Path(__file__), Path(__file__).with_name("mkcurve_tensor.py"),
              Path(__file__).with_name("mkcurve_directions.json"), Path(__file__).with_name("mkcurve_inputs.py"),
-             Path(__file__).with_name("chunk_dispatch.py"), Path(__file__).with_name("_io.py"),
+             Path(__file__).with_name("chunk_dispatch.py"), Path(__file__).with_name("_hardware.py"),
+             Path(__file__).with_name("_io.py"),
              Path(__file__).with_name("__init__.py"), Path(__file__).with_name("cli.py"),
              Path(__file__).with_name("__main__.py")]
     missing = [str(path) for path in files if not path.is_file()]
@@ -53,11 +54,18 @@ def inspect_mkcurve_backend(*_legacy_paths):
             libraries[key] = importlib.metadata.version(key)
         except importlib.metadata.PackageNotFoundError:
             missing.append("Python package " + key)
+    cuda_available = False
+    try:
+        libraries["torch"] = importlib.metadata.version("torch")
+        import torch
+        cuda_available = bool(torch.cuda.is_available())
+    except Exception:
+        pass
     return {"available": not missing, "missing_required": missing, "implementation": "python_port",
             "package_version": __version__,
             "port_version": PORT_VERSION, "upstream_url": UPSTREAM_URL, "upstream_commit": UPSTREAM_COMMIT,
             "source_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files if path.is_file()},
-            "libraries": libraries}
+            "libraries": libraries, "cuda_available": cuda_available}
 
 
 def synthetic_b0_grid(b0):
@@ -130,19 +138,27 @@ def _fit_chunk(payload, *, reuse_signal_logs=None):
 
     signals, design, grid, threshold, solver = payload
     if reuse_signal_logs is None:
-        reuse_signal_logs = solver == "reference"
+        reuse_signal_logs = True
     b0 = signals[:, 0].copy()
     fitter = None
     if reuse_signal_logs:
         from .mkcurve_tensor import _SyntheticB0Fitter
         fitter = _SyntheticB0Fitter(signals, design, solver=solver)
     original = fitter.fit(b0) if fitter else fit_wlls(signals, design, solver=solver)
-    curves = np.empty((len(grid), len(signals)))
-    for step, value in enumerate(grid):
-        signals[:, 0] = value
-        coefficients = fitter.fit(signals[:, 0]) if fitter else fit_wlls(signals, design, solver=solver)
-        curves[step] = mean_kurtosis(coefficients)
-    detection = detect_abnormal(curves, b0, grid, threshold)
+    if fitter is not None and len(grid) >= 64:
+        curves = fitter.fit_grid(grid)
+        detection = detect_abnormal(curves, b0, grid, threshold)
+        pos_max = detection["curve_valid_mask"] & (detection["max_mk"] > 0)
+        if np.any(pos_max):
+            mk_at_max = mean_kurtosis(fitter.fit(detection["max_mk_b0"]))
+            detection["max_mk"][pos_max] = np.clip(mk_at_max[pos_max], 0.0, None)
+    else:
+        curves = np.empty((len(grid), len(signals)))
+        for step, value in enumerate(grid):
+            signals[:, 0] = value
+            coefficients = fitter.fit(signals[:, 0]) if fitter else fit_wlls(signals, design, solver=solver)
+            curves[step] = mean_kurtosis(coefficients)
+        detection = detect_abnormal(curves, b0, grid, threshold)
     signals[:, 0] = detection["corrected_b0"]
     corrected = fitter.fit(signals[:, 0]) if fitter else fit_wlls(signals, design, solver=solver)
     for kind, coefficients in (("original", original), ("corrected", corrected)):
@@ -166,6 +182,91 @@ def _fit_chunk(payload, *, reuse_signal_logs=None):
     return original, corrected, curves, detection
 
 
+def _resolve_mkcurve_device(device: str) -> str:
+    dev = (device or "cpu").strip().lower()
+    if dev not in ("cpu", "cuda", "auto"):
+        raise ValueError("MK-Curve device must be 'cpu', 'cuda', or 'auto'")
+    if dev == "cpu":
+        return "cpu"
+    try:
+        import torch
+        has_cuda = bool(torch.cuda.is_available())
+    except Exception:
+        has_cuda = False
+    if dev == "cuda" and not has_cuda:
+        raise RuntimeError("MK-Curve device='cuda' requested, but torch.cuda.is_available() is False")
+    return "cuda" if has_cuda else "cpu"
+
+
+def _fit_chunk_cuda(payload):
+    import numpy as np
+    import torch
+    from ._hardware import empty_cuda_cache_safely, is_cuda_oom
+    from .mkcurve_tensor import (
+        _CudaSyntheticB0Fitter,
+        _mean_kurtosis_cuda,
+        _parameter_maps_cuda,
+    )
+
+    signals, design, grid, threshold, solver = payload
+    try:
+        fitter = _CudaSyntheticB0Fitter(signals, design, grid, solver=solver)
+        if fitter.ops is None:
+            return _fit_chunk(payload)
+
+        b0 = signals[:, 0].copy()
+        original = fitter.fit(b0)
+        curves = fitter.fit_grid()
+        detection = detect_abnormal(curves, b0, grid, threshold)
+        pos_max = detection["curve_valid_mask"] & (detection["max_mk"] > 0)
+        if np.any(pos_max):
+            mk_coeff = fitter.fit(detection["max_mk_b0"])
+            mk_coeff_t = torch.as_tensor(np.ascontiguousarray(mk_coeff), dtype=torch.float64, device=fitter.dev)
+            mk_at_max = _mean_kurtosis_cuda(mk_coeff_t, fitter.ops["diff_basis"], fitter.ops["kurt_basis"]).cpu().numpy()
+            detection["max_mk"][pos_max] = np.clip(mk_at_max[pos_max], 0.0, None)
+
+        signals[:, 0] = detection["corrected_b0"]
+        corrected = fitter.fit(signals[:, 0])
+        design_t = torch.as_tensor(np.ascontiguousarray(design), dtype=torch.float64, device=fitter.dev)
+        for kind, coefficients in (("original", original), ("corrected", corrected)):
+            maps = _parameter_maps_cuda(coefficients, fitter.ops)
+            valid = np.isfinite(coefficients).all(axis=1)
+            for key, values in maps.items():
+                lower, upper = (0, 1) if key == "fa" else ((0, 3) if key in {"mk", "ak", "rk"} else (0, .005))
+                valid &= np.isfinite(values) & (values >= lower) & (values <= upper)
+                detection[f"{kind}_{key}"] = values
+            observed = signals.copy()
+            if kind == "original":
+                observed[:, 0] = b0
+            obs_t = torch.as_tensor(np.ascontiguousarray(observed), dtype=torch.float64, device=fitter.dev)
+            coeff_t = torch.as_tensor(np.ascontiguousarray(coefficients), dtype=torch.float64, device=fitter.dev)
+            pred_t = torch.exp(torch.matmul(coeff_t, design_t.T))
+            nrmse_t = torch.sqrt(torch.mean((pred_t - obs_t) ** 2, dim=1)) / torch.exp(coeff_t[:, 0])
+            detection[f"{kind}_nrmse"] = nrmse_t.cpu().numpy()
+            valid &= detection["curve_valid_mask"] & np.isfinite(detection[f"{kind}_nrmse"])
+            detection[f"{kind}_valid_mask"] = valid
+            for key, mask in metric_validity(maps, np.isfinite(coefficients).all(axis=1),
+                                            detection["curve_valid_mask"], detection[f"{kind}_nrmse"]).items():
+                detection[f"{kind}_{key}_valid_mask"] = mask
+        return original, corrected, curves, detection
+    except BaseException as exc:
+        if not is_cuda_oom(exc):
+            raise
+        empty_cuda_cache_safely()
+        if len(signals) > 128:
+            mid = len(signals) // 2
+            orig_a, corr_a, cur_a, det_a = _fit_chunk_cuda((signals[:mid].copy(), design, grid, threshold, solver))
+            orig_b, corr_b, cur_b, det_b = _fit_chunk_cuda((signals[mid:].copy(), design, grid, threshold, solver))
+            merged = {k: np.concatenate([det_a[k], det_b[k]], axis=0) for k in det_a}
+            return (
+                np.concatenate([orig_a, orig_b], axis=0),
+                np.concatenate([corr_a, corr_b], axis=0),
+                np.concatenate([cur_a, cur_b], axis=1),
+                merged,
+            )
+        return _fit_chunk((signals.copy(), design, grid, threshold, solver))
+
+
 def _initialize_worker(threads):
     if threads is None:
         return
@@ -180,12 +281,13 @@ def _initialize_worker(threads):
 def run_mkcurve(dwi_path, bval_path, bvec_path, mask_path, output_dir, *,
                 b0_threshold=50., max_bvalue=3000., voxels_per_chunk=64,
                 threshold=.5, grid=None, log=None, num_workers=1, solver="reference",
-                worker_threads=None, chunk_schedule='dynamic', **legacy):
+                worker_threads=None, chunk_schedule='dynamic', device="cpu", **legacy):
     """Scan synthetic b0, identify abnormal curves, refit b0-corrected signals.
 
     Original inputs remain immutable. Raw untruncated maps, validity masks,
     curve samples, coefficients and provenance are retained for review.
     """
+    import os
     import nibabel as nib
     import numpy as np
     from .mkcurve_tensor import design_matrix
@@ -204,6 +306,7 @@ def run_mkcurve(dwi_path, bval_path, bvec_path, mask_path, output_dir, *,
         raise ValueError('MK-Curve chunk schedule must be dynamic or ordered')
     if solver not in {"reference", "batched"}:
         raise ValueError("MK-Curve solver must be reference or batched")
+    resolved_device = _resolve_mkcurve_device(device)
     if any(value is not None for value in legacy.values()):
         raise ValueError("MATLAB/source paths are not supported by this standalone Python port")
     if (not np.isfinite(b0_threshold) or b0_threshold < 0
@@ -221,7 +324,7 @@ def run_mkcurve(dwi_path, bval_path, bvec_path, mask_path, output_dir, *,
     inputs = {key: _signature(Path(path)) for key, path in
               zip(("dwi", "bval", "bvec", "mask"), (dwi_path, bval_path, bvec_path, mask_path))}
     progress = root / "mkcurve_progress.json"
-    _write_json(progress, {"status": "running", "implementation": "python_port"})
+    _write_json(progress, {"status": "running", "implementation": "python_port", "device": resolved_device})
     _write_json(root / "mkcurve_record.json", {"kind": "mkcurve_python_port", "status": "running", "inputs": inputs})
     try:
         with tempfile.TemporaryDirectory(prefix=".mkcurve-", dir=root) as temporary, ExitStack() as handles:
@@ -248,26 +351,48 @@ def run_mkcurve(dwi_path, bval_path, bvec_path, mask_path, output_dir, *,
             corrected_coefficients = np.lib.format.open_memmap(root / "corrected_coefficients.npy", mode="w+", dtype="float64", shape=(count, 22))
             results = {}
             try:
+                eff_workers = 1 if resolved_device == "cuda" else num_workers
+                if resolved_device == "cuda":
+                    from ._hardware import adaptive_cuda_scaled_batch
+                    per_voxel_bytes = max(16384, int(len(grid)) * 22 * 64)
+                    eff_chunk = adaptive_cuda_scaled_batch(
+                        per_voxel_bytes,
+                        max(voxels_per_chunk, 4096) if voxels_per_chunk <= 512 else voxels_per_chunk,
+                        min_batch=128,
+                        max_batch=16384,
+                    )
+                else:
+                    eff_chunk = voxels_per_chunk
+                chunk_fn = _fit_chunk_cuda if resolved_device == "cuda" else _fit_chunk
                 if worker_threads is not None:
                     from threadpoolctl import threadpool_limits
                     handles.enter_context(threadpool_limits(limits=worker_threads))
-                if num_workers > 1:
-                    from concurrent.futures import ProcessPoolExecutor
-                    import multiprocessing
-                    pool = ProcessPoolExecutor(max_workers=num_workers,
-                        mp_context=multiprocessing.get_context("spawn"),
-                        initializer=_initialize_worker, initargs=(worker_threads,))
+                if eff_workers > 1:
+                    import sys
+                    main_file = getattr(sys.modules.get("__main__"), "__file__", None)
+                    can_spawn = bool(main_file) and Path(main_file).is_file()
+                    if os.name == "nt" and not (can_spawn and count >= 256):
+                        from concurrent.futures import ThreadPoolExecutor
+                        pool = ThreadPoolExecutor(max_workers=eff_workers,
+                            initializer=_initialize_worker, initargs=(worker_threads,))
+                    else:
+                        from concurrent.futures import ProcessPoolExecutor
+                        import multiprocessing
+                        pool = ProcessPoolExecutor(max_workers=eff_workers,
+                            mp_context=multiprocessing.get_context("spawn"),
+                            initializer=_initialize_worker, initargs=(worker_threads,))
                     handles.callback(pool.shutdown, wait=True, cancel_futures=True)
                 else:
                     pool = None
                 def payload(start):
-                    stop = min(start + voxels_per_chunk, count)
+                    stop = min(start + eff_chunk, count)
                     chunk_coords = tuple(c[start:stop] for c in coords)
                     return data[chunk_coords].copy(), design, grid, threshold, solver
                 from .chunk_dispatch import chunk_results
                 completed = 0
-                for start, stop, fitted in chunk_results(count, voxels_per_chunk, num_workers,
-                        payload, _fit_chunk, pool=pool, schedule=chunk_schedule):
+                last_progress = 0.0
+                for start, stop, fitted in chunk_results(count, eff_chunk, eff_workers,
+                        payload, chunk_fn, pool=pool, schedule=chunk_schedule):
                     chunk_coords = tuple(c[start:stop] for c in coords)
                     original, corrected, chunk_curves, detection = fitted
                     original_coefficients[start:stop] = original
@@ -281,8 +406,11 @@ def run_mkcurve(dwi_path, bval_path, bvec_path, mask_path, output_dir, *,
                     completed += stop - start
                     if log:
                         log(f"[MK-Curve Python] {completed}/{count} voxels; {len(grid)} synthetic b0 samples")
-                    _write_json(progress, {"status": "running", "completed_voxels": completed, "total_voxels": count,
-                                           "num_workers": num_workers, "solver": solver})
+                    now = time.monotonic()
+                    if start == 0 or completed >= count or (now - last_progress) >= 1.0:
+                        _write_json(progress, {"status": "running", "completed_voxels": completed, "total_voxels": count,
+                                               "num_workers": eff_workers, "solver": solver, "device": resolved_device})
+                        last_progress = now
                 paths, summaries = {}, {}
                 for key, values in results.items():
                     path = root / f"mkcurve_{key}.nii.gz"
@@ -295,9 +423,10 @@ def run_mkcurve(dwi_path, bval_path, bvec_path, mask_path, output_dir, *,
                     summaries[key] = {"finite": int(np.isfinite(selected).sum()), "nonzero": int(np.count_nonzero(selected))}
                 record = {"kind": "mkcurve_python_port", "status": "completed", "backend": backend,
                           "method": "author-style unconstrained WLLS, numerical 256-direction MK, synthetic-b0 correction",
-                          "settings": {"threshold": threshold, "solver": solver, "num_workers": num_workers,
-                                       "voxels_per_chunk": voxels_per_chunk, "worker_threads": worker_threads,
-                                       "chunk_schedule": chunk_schedule, "max_inflight_chunks": num_workers,
+                          "settings": {"threshold": threshold, "solver": solver, "device": resolved_device,
+                                       "num_workers": num_workers,
+                                       "voxels_per_chunk": eff_chunk, "worker_threads": worker_threads,
+                                       "chunk_schedule": chunk_schedule, "max_inflight_chunks": eff_workers,
                                        "grid_policy": grid_policy,
                                        "grid_samples": len(grid), "b0_threshold": b0_threshold, "max_bvalue": max_bvalue},
                           "maps": paths, "inputs": inputs, "preparation": preparation, "signal_repair": repair,
@@ -335,6 +464,15 @@ def run_mkcurve(dwi_path, bval_path, bvec_path, mask_path, output_dir, *,
             finally:
                 for array in (curves, original_coefficients, corrected_coefficients, *results.values()):
                     array._mmap.close()
+                if isinstance(data, np.memmap):
+                    data._mmap.close()
+                for holder in working_image.file_map.values():
+                    if getattr(holder, "fileobj", None) is not None:
+                        holder.fileobj.close()
+                results.clear()
+                del curves, original_coefficients, corrected_coefficients, data, working_image
+                import gc
+                gc.collect()
     except Exception as exc:
         _write_json(progress, {"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
         _write_json(root / "mkcurve_record.json", {"kind": "mkcurve_python_port", "status": "failed", "error": f"{type(exc).__name__}: {exc}"})
